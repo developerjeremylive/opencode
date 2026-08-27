@@ -2,7 +2,6 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import type { Config } from "@opencode-ai/sdk/v2/client"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Button } from "@opencode-ai/ui/button"
-import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Popover } from "@opencode-ai/ui/popover"
 import { TextField } from "@opencode-ai/ui/text-field"
@@ -91,25 +90,6 @@ export function DialogMcpManager() {
   }
 
   const resetJson = () => setText(JSON.stringify(mcpConfig(), null, 2))
-
-  const deleteServer = async (name: string) => {
-    setSaving(true)
-    try {
-      const current = mcpConfig()
-      const next = { ...current }
-      delete next[name]
-      await serverSync().updateConfig({ mcp: next } as Config)
-      setText(JSON.stringify(next, null, 2))
-      showToast({ variant: "success", title: language.t("mcp.delete.removed", { name }) })
-    } catch (error) {
-      showToast({
-        variant: "error",
-        title: language.t("common.requestFailed"),
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-    setSaving(false)
-  }
 
   const addServer = async (close: () => void) => {
     const id = name().trim()
@@ -205,16 +185,6 @@ export function DialogMcpManager() {
                         {item.name}
                       </span>
                       <div class="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
-                        <Show when={mcpConfig()[item.name] !== undefined}>
-                          <IconButton
-                            icon="trash"
-                            size="small"
-                            variant="ghost"
-                            class="text-icon-critical-base"
-                            disabled={saving()}
-                            onClick={() => void deleteServer(item.name)}
-                          />
-                        </Show>
                         <Switch
                           checked={on()}
                           disabled={!status() || status() === "pending" || (toggle.isPending && toggle.variables === item.name)}
