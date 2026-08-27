@@ -95,7 +95,11 @@ export function DialogMcpManager() {
   const deleteServer = async (name: string) => {
     setSaving(true)
     try {
-      await serverSync().updateConfig({ mcp: { [name]: null } } as Config)
+      const current = mcpConfig()
+      const next = { ...current }
+      delete next[name]
+      await serverSync().updateConfig({ mcp: next } as Config)
+      setText(JSON.stringify(next, null, 2))
       showToast({ variant: "success", title: language.t("mcp.delete.removed", { name }) })
     } catch (error) {
       showToast({
@@ -117,6 +121,7 @@ export function DialogMcpManager() {
     setSaving(true)
     try {
       await serverSync().updateConfig({ mcp: { [id]: entry } } as Config)
+      setText(JSON.stringify({ ...mcpConfig(), [id]: entry }, null, 2))
       showToast({ variant: "success", title: language.t("mcp.add.added", { name: id }) })
       setName("")
       setCommand("")
@@ -133,8 +138,8 @@ export function DialogMcpManager() {
   }
 
   return (
-    <Dialog title={language.t("page.mcp.title")} description={language.t("page.mcp.description", { connected: connected(), total: items().length })}>
-      <div class="flex flex-col gap-4 px-3 pb-3 min-w-[min(960px,92vw)] max-h-[80vh] overflow-y-auto">
+    <Dialog size="x-large" fit title={language.t("page.mcp.title")} description={language.t("page.mcp.description", { connected: connected(), total: items().length })}>
+      <div class="flex flex-col gap-4 px-3 pb-3 max-h-[75vh] overflow-y-auto">
         <div class="flex items-center justify-between gap-2">
           <span class="text-12-medium text-text-weak">{language.t("page.mcp.cards")}</span>
           <Popover
@@ -200,14 +205,16 @@ export function DialogMcpManager() {
                         {item.name}
                       </span>
                       <div class="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
-                        <IconButton
-                          icon="trash"
-                          size="small"
-                          variant="ghost"
-                          class="text-icon-critical-base"
-                          disabled={saving() || mcpConfig()[item.name] === undefined}
-                          onClick={() => void deleteServer(item.name)}
-                        />
+                        <Show when={mcpConfig()[item.name] !== undefined}>
+                          <IconButton
+                            icon="trash"
+                            size="small"
+                            variant="ghost"
+                            class="text-icon-critical-base"
+                            disabled={saving()}
+                            onClick={() => void deleteServer(item.name)}
+                          />
+                        </Show>
                         <Switch
                           checked={on()}
                           disabled={!status() || status() === "pending" || (toggle.isPending && toggle.variables === item.name)}
