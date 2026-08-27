@@ -2,6 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import type { Config } from "@opencode-ai/sdk/v2/client"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Button } from "@opencode-ai/ui/button"
+import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Popover } from "@opencode-ai/ui/popover"
 import { TextField } from "@opencode-ai/ui/text-field"
@@ -32,6 +33,7 @@ export function DialogMcpManager() {
   const [url, setUrl] = createSignal("")
   const [enabled, setEnabled] = createSignal(true)
   const [saving, setSaving] = createSignal(false)
+  const [jsonEditing, setJsonEditing] = createSignal(false)
 
   const mcpConfig = createMemo(() => serverSync().data.config.mcp ?? {})
   const items = createMemo(() => {
@@ -69,11 +71,15 @@ export function DialogMcpManager() {
 
   const saveJson = async () => {
     const value = parsed()
-    if (!value) return
+    if (!value) {
+      showToast({ variant: "error", title: language.t("mcp.json.parseError") })
+      return
+    }
     setSaving(true)
     try {
       await serverSync().updateConfig({ mcp: value } as Config)
       showToast({ variant: "success", title: language.t("mcp.json.saved") })
+      setJsonEditing(false)
     } catch (error) {
       showToast({
         variant: "error",
@@ -85,6 +91,21 @@ export function DialogMcpManager() {
   }
 
   const resetJson = () => setText(JSON.stringify(mcpConfig(), null, 2))
+
+  const deleteServer = async (name: string) => {
+    setSaving(true)
+    try {
+      await serverSync().updateConfig({ mcp: { [name]: null } } as Config)
+      showToast({ variant: "success", title: language.t("mcp.delete.removed", { name }) })
+    } catch (error) {
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+    setSaving(false)
+  }
 
   const addServer = async (close: () => void) => {
     const id = name().trim()
@@ -113,7 +134,7 @@ export function DialogMcpManager() {
 
   return (
     <Dialog title={language.t("page.mcp.title")} description={language.t("page.mcp.description", { connected: connected(), total: items().length })}>
-      <div class="flex flex-col gap-4 px-3 pb-3 min-w-[min(720px,90vw)]">
+      <div class="flex flex-col gap-4 px-3 pb-3 min-w-[min(960px,92vw)] max-h-[80vh] overflow-y-auto">
         <div class="flex items-center justify-between gap-2">
           <span class="text-12-medium text-text-weak">{language.t("page.mcp.cards")}</span>
           <Popover
@@ -178,7 +199,15 @@ export function DialogMcpManager() {
                       <span class="text-14-medium text-text-strong truncate" title={item.name}>
                         {item.name}
                       </span>
-                      <div onClick={(event) => event.stopPropagation()}>
+                      <div class="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                        <IconButton
+                          icon="trash"
+                          size="small"
+                          variant="ghost"
+                          class="text-icon-critical-base"
+                          disabled={saving() || mcpConfig()[item.name] === undefined}
+                          onClick={() => void deleteServer(item.name)}
+                        />
                         <Switch
                           checked={on()}
                           disabled={!status() || status() === "pending" || (toggle.isPending && toggle.variables === item.name)}
@@ -215,17 +244,28 @@ export function DialogMcpManager() {
           <div class="flex items-center justify-between gap-2">
             <span class="text-12-medium text-text-weak">{language.t("mcp.json.title")}</span>
             <div class="flex gap-2">
+              <Show when={!jsonEditing()}>
+                <Button size="small" variant="ghost" onClick={() => { setJsonEditing(true); showToast({ variant: "info", title: language.t("mcp.json.editNotice") }) }}>
+                  {language.t("mcp.json.edit")}
+                </Button>
+              </Show>
               <Button size="small" variant="ghost" onClick={resetJson}>
                 {language.t("mcp.json.reset")}
               </Button>
-              <Button size="small" variant="primary" disabled={!parsed()} onClick={() => void saveJson()}>
-                {language.t("mcp.json.save")}
-              </Button>
+              <Show when={jsonEditing()}>
+                <Button size="small" variant="ghost" onClick={() => { setText(JSON.stringify(mcpConfig(), null, 2)); setJsonEditing(false) }}>
+                  {language.t("mcp.json.cancel")}
+                </Button>
+                <Button size="small" variant="primary" disabled={!parsed()} onClick={() => void saveJson()}>
+                  {language.t("mcp.json.save")}
+                </Button>
+              </Show>
             </div>
           </div>
           <textarea
             class="w-full h-56 resize-y rounded-lg border border-border-weak-base bg-background-base p-3 font-mono text-12-regular text-text-base outline-none focus:border-text-interactive-base"
             spellcheck={false}
+            readonly={!jsonEditing()}
             value={text()}
             onInput={(event) => setText(event.currentTarget.value)}
           />
