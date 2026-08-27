@@ -34,6 +34,7 @@ import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, close
 import type { DragEvent } from "@thisbeyond/solid-dnd"
 import { useProviders } from "@/hooks/use-providers"
 import { dismissToast, setV2Toast, showToast, ToastRegion } from "@/utils/toast"
+import { SDKProvider } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
 import { clearWorkspaceTerminals } from "@/context/terminal"
@@ -1121,9 +1122,14 @@ export default function LegacyLayout(props: ParentProps) {
 
   function openMcp() {
     const run = ++dialogRun
+    const dir = currentDir()
     void import("@/components/dialog-mcp-manager").then((x) => {
       if (dialogDead || dialogRun !== run) return
-      dialog.show(() => <x.DialogMcpManager />)
+      dialog.show(() => (
+        <SDKProvider directory={dir}>
+          <x.DialogMcpManager />
+        </SDKProvider>
+      ))
     })
   }
 
