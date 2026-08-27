@@ -145,6 +145,15 @@ export default function LegacyLayout(props: ParentProps) {
   const colorSchemeLabel = (scheme: ColorScheme) => language.t(colorSchemeKey[scheme])
   const currentDir = createMemo(() => route().dir)
 
+  // "Show left sidebar" setting keeps the projects sidebar rendered and open
+  // regardless of the window width.
+  const forceSidebar = createMemo(() => settings.general.showSidebar())
+  createEffect(
+    on(forceSidebar, (show) => {
+      if (show) layout.sidebar.open()
+    }),
+  )
+
   const [state, setState] = createStore({
     autoselect: !initialDirectory,
     busyWorkspaces: {} as Record<string, boolean>,
@@ -1107,6 +1116,22 @@ export default function LegacyLayout(props: ParentProps) {
     void module.then((x) => {
       if (dialogDead || dialogRun !== run) return
       dialog.show(() => <x.DialogSettings />)
+    })
+  }
+
+  function openMcp() {
+    const run = ++dialogRun
+    void import("@/components/dialog-mcp-manager").then((x) => {
+      if (dialogDead || dialogRun !== run) return
+      dialog.show(() => <x.DialogMcpManager />)
+    })
+  }
+
+  function openPlugins() {
+    const run = ++dialogRun
+    void import("@/components/dialog-plugins").then((x) => {
+      if (dialogDead || dialogRun !== run) return
+      dialog.show(() => <x.DialogPlugins />)
     })
   }
 
@@ -2237,6 +2262,10 @@ export default function LegacyLayout(props: ParentProps) {
       settingsLabel={() => language.t("sidebar.settings")}
       settingsKeybind={() => command.keybind("settings.open")}
       onOpenSettings={openSettings}
+      mcpLabel={() => language.t("sidebar.mcp")}
+      onOpenMcp={openMcp}
+      pluginsLabel={() => language.t("sidebar.plugins")}
+      onOpenPlugins={openPlugins}
       helpLabel={() => language.t("sidebar.help")}
       onOpenHelp={() => platform.openExternal("https://opencode.ai/desktop-feedback")}
       renderPanel={() =>
@@ -2266,7 +2295,8 @@ export default function LegacyLayout(props: ParentProps) {
               aria-label={language.t("sidebar.nav.projectsAndSessions")}
               data-component="sidebar-nav-desktop"
               classList={{
-                "hidden xl:block": true,
+                "hidden xl:block": !forceSidebar(),
+                "!block": forceSidebar(),
                 "absolute inset-y-0 start-0": true,
                 "z-10": true,
               }}
@@ -2347,7 +2377,7 @@ export default function LegacyLayout(props: ParentProps) {
                   !state.sizing,
               }}
               style={{
-                "--main-left": layout.sidebar.opened() ? `${side()}px` : "4rem",
+                "--main-left": layout.sidebar.opened() || forceSidebar() ? `${side()}px` : "4rem",
               }}
             >
               <main

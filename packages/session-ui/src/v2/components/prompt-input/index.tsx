@@ -41,6 +41,8 @@ export type PromptInputV2Props = {
   borderUnderlay?: boolean
   class?: string
   modelControl?: JSX.Element
+  mcpControl?: JSX.Element
+  pluginsControl?: JSX.Element
   variantControlVisible?: boolean
   attachKeybind?: string[]
   attachShortcut?: string
@@ -253,6 +255,8 @@ export function PromptInputV2(props: PromptInputV2Props) {
                 </Show>
               )}
             </Show>
+            {props.mcpControl}
+            {props.pluginsControl}
           </div>
           <PromptInputV2SubmitButton
             mode={state.mode}

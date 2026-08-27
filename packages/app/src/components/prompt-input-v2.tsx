@@ -1,12 +1,15 @@
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
+import { Icon as LegacyIcon } from "@opencode-ai/ui/icon"
+import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
+import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
-import { createEffect, createMemo, on, Show } from "solid-js"
+import { createEffect, createMemo, For, on, Show } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
 import type { PromptInputProps } from "@/components/prompt-input/contracts"
@@ -16,6 +19,8 @@ import { promptDesignPlaceholder, promptPlaceholder } from "@/components/prompt-
 import { createPromptSubmit } from "@/components/prompt-input/submit"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import { useComments } from "@/context/comments"
+import { useMcpToggle } from "@/context/mcp"
+import { usePlugins } from "@/hooks/use-plugins"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
@@ -73,6 +78,8 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
             }
           />
         }
+        mcpControl={<PromptInputV2McpControl />}
+        pluginsControl={<PromptInputV2PluginsControl />}
       />
     </div>
   )
@@ -550,8 +557,7 @@ function PromptInputV2ModelControl(props: {
   )
 }
 
-function openComment(
-  item: { path: string; commentID?: string; commentOrigin?: "review" | "file" },
+function openComment(  item: { path: string; commentID?: string; commentOrigin?: "review" | "file" },
   props: PromptInputV2ControllerProps,
   sync: ReturnType<typeof useSync>,
   layout: ReturnType<typeof useLayout>,
@@ -586,4 +592,90 @@ function openComment(
   void props.controls.session.tabs.open(tab)
   props.controls.session.tabs.setActive(tab)
   void Promise.resolve(files.load(item.path)).finally(() => queueFocus())
+}
+
+function PromptInputV2McpControl() {
+  const language = useLanguage()
+  const sync = useSync()
+  const toggle = useMcpToggle()
+  const items = createMemo(() =>
+    Object.entries(sync().data.mcp ?? {})
+      .map(([name, status]) => ({ name, status: status.status }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  )
+
+  return (
+    <Show when={items().length > 0}>
+      <TooltipV2 placement="top" gutter={4} value={language.t("prompt.mcp.title")}>
+        <MenuV2 gutter={6} modal={false} placement="top-start">
+          <MenuV2.Trigger
+            as={IconButtonV2}
+            data-action="prompt-mcp"
+            type="button"
+            icon={<LegacyIcon name="mcp" size="small" />}
+            variant="ghost-muted"
+            size="large"
+            aria-label={language.t("prompt.mcp.title")}
+          />
+          <MenuV2.Portal>
+            <MenuV2.Content style={{ "min-width": "220px" }}>
+              <For each={items()}>
+                {(item) => (
+                  <MenuV2.CheckboxItem
+                    closeOnSelect={false}
+                    checked={item.status === "connected"}
+                    disabled={item.status === "pending" || (toggle.isPending && toggle.variables === item.name)}
+                    onChange={() => {
+                      if (toggle.isPending) return
+                      toggle.mutate(item.name)
+                    }}
+                  >
+                    <span class="truncate">{item.name}</span>
+                  </MenuV2.CheckboxItem>
+                )}
+              </For>
+            </MenuV2.Content>
+          </MenuV2.Portal>
+        </MenuV2>
+      </TooltipV2>
+    </Show>
+  )
+}
+
+function PromptInputV2PluginsControl() {
+  const language = useLanguage()
+  const plugins = usePlugins()
+
+  return (
+    <Show when={plugins.items().length > 0}>
+      <TooltipV2 placement="top" gutter={4} value={language.t("prompt.plugins.title")}>
+        <MenuV2 gutter={6} modal={false} placement="top-start">
+          <MenuV2.Trigger
+            as={IconButtonV2}
+            data-action="prompt-plugins"
+            type="button"
+            icon={<LegacyIcon name="providers" size="small" />}
+            variant="ghost-muted"
+            size="large"
+            aria-label={language.t("prompt.plugins.title")}
+          />
+          <MenuV2.Portal>
+            <MenuV2.Content style={{ "min-width": "220px" }}>
+              <For each={plugins.items()}>
+                {(item) => (
+                  <MenuV2.CheckboxItem
+                    closeOnSelect={false}
+                    checked={item.active}
+                    onChange={(next) => void plugins.write(item.name, item.entry, next)}
+                  >
+                    <span class="truncate">{item.name}</span>
+                  </MenuV2.CheckboxItem>
+                )}
+              </For>
+            </MenuV2.Content>
+          </MenuV2.Portal>
+        </MenuV2>
+      </TooltipV2>
+    </Show>
+  )
 }

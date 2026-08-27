@@ -442,6 +442,26 @@ export const SettingsGeneralV2: Component<{
     </div>
   )
 
+  const UiUxSection = () => (
+    <div class="settings-v2-section">
+      <h3 class="settings-v2-section-title">{language.t("settings.general.section.uiux")}</h3>
+
+      <SettingsListV2>
+        <SettingsRowV2
+          title={language.t("settings.general.row.showSidebar.title")}
+          description={language.t("settings.general.row.showSidebar.description")}
+        >
+          <div data-action="settings-show-sidebar">
+            <Switch
+              checked={settings.general.showSidebar()}
+              onChange={(checked) => settings.general.setShowSidebar(checked)}
+            />
+          </div>
+        </SettingsRowV2>
+      </SettingsListV2>
+    </div>
+  )
+
   const NotificationsSection = () => (
     <div class="settings-v2-section">
       <h3 class="settings-v2-section-title">{language.t("settings.general.section.notifications")}</h3>
@@ -551,6 +571,8 @@ export const SettingsGeneralV2: Component<{
         </Show>
 
         <GeneralSection />
+
+        <UiUxSection />
 
         <AppearanceSection controller={appearance} />
 

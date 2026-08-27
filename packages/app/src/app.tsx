@@ -594,7 +594,16 @@ export function AppInterface(props: {
                       <NotificationProvider>
                         <ServerShell>
                           <Show when={useSettings().general.newLayoutDesigns()} fallback={routerProps.children}>
-                            <NewAppLayout serverScoped={props.serverScoped}>{routerProps.children}</NewAppLayout>
+                            <Show
+                              when={useSettings().general.showSidebar()}
+                              fallback={
+                                <NewAppLayout serverScoped={props.serverScoped}>{routerProps.children}</NewAppLayout>
+                              }
+                            >
+                              <LegacyServerLayout serverScoped={props.serverScoped}>
+                                {routerProps.children}
+                              </LegacyServerLayout>
+                            </Show>
                           </Show>
                         </ServerShell>
                       </NotificationProvider>

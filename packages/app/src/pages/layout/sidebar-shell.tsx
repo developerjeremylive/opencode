@@ -28,6 +28,10 @@ export const SidebarContent = (props: {
   settingsLabel: Accessor<string>
   settingsKeybind: Accessor<string | undefined>
   onOpenSettings: () => void
+  mcpLabel: Accessor<string>
+  onOpenMcp: () => void
+  pluginsLabel: Accessor<string>
+  onOpenPlugins: () => void
   helpLabel: Accessor<string>
   onOpenHelp: () => void
   renderPanel: () => JSX.Element
@@ -90,6 +94,24 @@ export const SidebarContent = (props: {
           </DragDropProvider>
         </div>
         <div class="shrink-0 w-full pt-3 pb-6 flex flex-col items-center gap-2">
+          <Tooltip placement={placement()} value={props.mcpLabel()}>
+            <IconButton
+              icon="mcp"
+              variant="ghost"
+              size="large"
+              onClick={props.onOpenMcp}
+              aria-label={props.mcpLabel()}
+            />
+          </Tooltip>
+          <Tooltip placement={placement()} value={props.pluginsLabel()}>
+            <IconButton
+              icon="providers"
+              variant="ghost"
+              size="large"
+              onClick={props.onOpenPlugins}
+              aria-label={props.pluginsLabel()}
+            />
+          </Tooltip>
           <TooltipKeybind placement={placement()} title={props.settingsLabel()} keybind={props.settingsKeybind() ?? ""}>
             <IconButton
               icon="settings-gear"
