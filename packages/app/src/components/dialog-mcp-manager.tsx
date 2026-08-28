@@ -142,11 +142,12 @@ export function DialogMcpManager() {
 
   const parsed = createMemo(() => {
     try {
-      const value = JSON.parse(text())
+      const raw = text()
+      if (!raw) return undefined
+      const value = JSON.parse(raw)
       if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
       return value as Record<string, unknown>
-    } catch (e) {
-      console.error("[MCP] JSON parse error:", e, "text:", JSON.stringify(text()))
+    } catch {
       return undefined
     }
   })
