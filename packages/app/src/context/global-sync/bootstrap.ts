@@ -109,8 +109,7 @@ export const loadGlobalConfigQuery = (scope: ServerScope, sdk: OpencodeClient, p
   queryOptions({
     queryKey: [scope, "config"],
     queryFn: async () => {
-      if ((await protocol) !== "v1") return {}
-      return retry(() => sdk.global.config.get().then((x) => x.data!))
+      return retry(() => sdk.global.config.get().then((x) => x.data ?? {}))
     },
   })
 

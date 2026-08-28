@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, Show, onMount } from "solid-js"
 import type { Config } from "@opencode-ai/sdk/v2/client"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Button } from "@opencode-ai/ui/button"
@@ -35,51 +35,71 @@ export function DialogMcpManager() {
   const [jsonEditing, setJsonEditing] = createSignal(false)
 
   const mcpConfig = createMemo(() => serverSync().data.config.mcp ?? {})
+
   const items = createMemo(() => {
-    const status = sync().data.mcp ?? {}
     const config = mcpConfig()
-    const names = new Set([...Object.keys(status), ...Object.keys(config)])
-    return [...names].sort((a, b) => a.localeCompare(b)).map((name) => {
-      const entry = config[name]
-      const kind =
-        entry && typeof entry === "object" && "type" in entry
-          ? entry.type
-          : entry && typeof entry === "object" && "enabled" in entry
-            ? undefined
-            : undefined
-      return { name, status: status[name]?.status, kind }
-    })
+    const status = sync().data.mcp ?? {}
+    return Object.keys(config)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => {
+        const entry = config[name]
+        const kind =
+          entry && typeof entry === "object" && "type" in entry
+            ? entry.type
+            : entry && typeof entry === "object" && "enabled" in entry
+              ? undefined
+              : undefined
+        return { name, status: status[name]?.status, kind }
+      })
   })
   const connected = createMemo(() => items().filter((item) => item.status === "connected").length)
 
   const [text, setText] = createSignal("")
-  const [loaded, setLoaded] = createSignal(false)
-  if (!loaded()) {
-    setText(JSON.stringify(mcpConfig(), null, 2))
-    setLoaded(true)
-  }
+
+  // Seed the textarea with the current server config on mount.
+  // This is the ONLY place that sets the initial value — no reactive
+  // effect overwrites it afterwards.
+  onMount(() => {
+    const cfg = mcpConfig()
+    console.log("[MCP] onMount mcpConfig:", JSON.stringify(cfg, null, 2))
+    setText(JSON.stringify(cfg, null, 2))
+  })
+
   const parsed = createMemo(() => {
     try {
       const value = JSON.parse(text())
       if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
       return value as Record<string, unknown>
-    } catch {
+    } catch (e) {
+      console.error("[MCP] JSON parse error:", e, "text:", JSON.stringify(text()))
       return undefined
     }
   })
 
   const saveJson = async () => {
     const value = parsed()
+    console.log("[MCP] saveJson called, parsed:", value)
     if (!value) {
       showToast({ variant: "error", title: language.t("mcp.json.parseError") })
       return
     }
     setSaving(true)
     try {
-      await serverSync().updateConfig({ mcp: value } as Config)
+      const oldMcp = serverSync().data.config.mcp ?? {}
+      const patched: Record<string, unknown> = { ...value }
+      for (const key of Object.keys(oldMcp)) {
+        if (!(key in patched)) {
+          patched[key] = { enabled: false }
+        }
+      }
+      const fullConfig = { ...serverSync().data.config, mcp: patched } as Config
+      console.log("[MCP] sending config to server:", JSON.stringify(fullConfig, null, 2))
+      await serverSync().updateConfig(fullConfig)
+      setText(JSON.stringify(patched, null, 2))
       showToast({ variant: "success", title: language.t("mcp.json.saved") })
       setJsonEditing(false)
     } catch (error) {
+      console.error("[MCP] saveJson error:", error)
       showToast({
         variant: "error",
         title: language.t("common.requestFailed"),
@@ -89,7 +109,10 @@ export function DialogMcpManager() {
     setSaving(false)
   }
 
-  const resetJson = () => setText(JSON.stringify(mcpConfig(), null, 2))
+  const resetJson = () => {
+    console.log("[MCP] resetJson called")
+    setText(JSON.stringify(mcpConfig(), null, 2))
+  }
 
   const addServer = async (close: () => void) => {
     const id = name().trim()
@@ -100,8 +123,9 @@ export function DialogMcpManager() {
         : { type: "remote", url: url().trim(), enabled: enabled() }
     setSaving(true)
     try {
-      await serverSync().updateConfig({ mcp: { [id]: entry } } as Config)
-      setText(JSON.stringify({ ...mcpConfig(), [id]: entry }, null, 2))
+      const fullConfig = { ...serverSync().data.config, mcp: { ...(serverSync().data.config.mcp ?? {}), [id]: entry } } as Config
+      await serverSync().updateConfig(fullConfig)
+      setText(JSON.stringify({ ...((serverSync().data.config.mcp ?? {}) as Record<string, unknown>), [id]: entry }, null, 2))
       showToast({ variant: "success", title: language.t("mcp.add.added", { name: id }) })
       setName("")
       setCommand("")
@@ -221,21 +245,18 @@ export function DialogMcpManager() {
           <div class="flex items-center justify-between gap-2">
             <span class="text-12-medium text-text-weak">{language.t("mcp.json.title")}</span>
             <div class="flex gap-2">
-              <Show when={!jsonEditing()}>
-                <Button size="small" variant="ghost" onClick={() => { setJsonEditing(true); showToast({ variant: "info", title: language.t("mcp.json.editNotice") }) }}>
-                  {language.t("mcp.json.edit")}
+              <Show when={jsonEditing() || text() === ""} fallback={<Button size="small" variant="ghost" onClick={() => { setJsonEditing(true); showToast({ variant: "info", title: language.t("mcp.json.editNotice") }) }}>{language.t("mcp.json.edit")}</Button>}>
+                <Button size="small" variant="ghost" onClick={resetJson}>
+                  {language.t("mcp.json.reset")}
                 </Button>
-              </Show>
-              <Button size="small" variant="ghost" onClick={resetJson}>
-                {language.t("mcp.json.reset")}
-              </Button>
-              <Show when={jsonEditing()}>
-                <Button size="small" variant="ghost" onClick={() => { setText(JSON.stringify(mcpConfig(), null, 2)); setJsonEditing(false) }}>
-                  {language.t("mcp.json.cancel")}
-                </Button>
-                <Button size="small" variant="primary" disabled={!parsed()} onClick={() => void saveJson()}>
-                  {language.t("mcp.json.save")}
-                </Button>
+                <Show when={jsonEditing()}>
+                  <Button size="small" variant="ghost" onClick={() => { setText(JSON.stringify(mcpConfig(), null, 2)); setJsonEditing(false) }}>
+                    {language.t("mcp.json.cancel")}
+                  </Button>
+                  <Button size="small" variant="primary" disabled={!parsed()} onClick={() => { console.log("[MCP] save clicked, parsed:", parsed(), "text:", text()); void saveJson() }}>
+                    {language.t("mcp.json.save")}
+                  </Button>
+                </Show>
               </Show>
             </div>
           </div>

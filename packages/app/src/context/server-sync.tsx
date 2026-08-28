@@ -661,8 +661,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     mutationFn: (config: Config) => serverSDK.client.global.config.update({ config }),
     onSuccess: () => {
       bootstrap.refetch()
-      // Invalidate all provider queries so newly configured custom providers
-      // appear immediately in the available provider list across all directories.
+      queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] === serverSDK.scope && query.queryKey[1] === "config",
+      })
       queryClient.invalidateQueries({ queryKey: [serverSDK.scope, null, "providers"] })
       queryClient.invalidateQueries({
         predicate: (query) => query.queryKey[0] === serverSDK.scope && query.queryKey[2] === "providers",
