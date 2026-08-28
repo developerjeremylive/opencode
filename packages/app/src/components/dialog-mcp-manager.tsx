@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show, onMount } from "solid-js"
+import { createMemo, createSignal, For, Show, onMount, createEffect } from "solid-js"
 import type { Config } from "@opencode-ai/sdk/v2/client"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Button } from "@opencode-ai/ui/button"
@@ -10,6 +10,7 @@ import { useSync } from "@/context/sync"
 import { useMcpToggle } from "@/context/mcp"
 import { useServerSync } from "@/context/server-sync"
 import { showToast } from "@/utils/toast"
+import { useQueryClient } from "@tanstack/solid-query"
 
 const statusLabels = {
   connected: "mcp.status.connected",
@@ -19,11 +20,40 @@ const statusLabels = {
   disabled: "mcp.status.disabled",
 } as const
 
+const LOCAL_MCP_KEY = "opencode.mcp.local.config"
+
+function localKeyFor(dir: string): string {
+  return `${LOCAL_MCP_KEY}:${encodeURIComponent(dir ?? "global")}`
+}
+
+function loadLocalMcp(dir: string): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem(localKeyFor(dir))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function saveLocalMcp(dir: string, config: Record<string, unknown>): void {
+  try {
+    localStorage.setItem(localKeyFor(dir), JSON.stringify(config))
+  } catch {
+    // ignore
+  }
+}
+
 export function DialogMcpManager() {
   const language = useLanguage()
   const sync = useSync()
   const serverSync = useServerSync()
   const toggle = useMcpToggle()
+  const queryClient = useQueryClient()
 
   const [addOpen, setAddOpen] = createSignal(false)
   const [name, setName] = createSignal("")
@@ -33,11 +63,53 @@ export function DialogMcpManager() {
   const [enabled, setEnabled] = createSignal(true)
   const [saving, setSaving] = createSignal(false)
   const [jsonEditing, setJsonEditing] = createSignal(false)
+  const [warnUnsaved, setWarnUnsaved] = createSignal(false)
 
-  const mcpConfig = createMemo(() => serverSync().data.config.mcp ?? {})
+  // Directorio actual para localStorage (usa el del server si está disponible)
+  const directory = createMemo(() => serverSync().data.path?.directory ?? "")
+  const localDir = createMemo(() => directory() || "global")
+
+  // Config del servidor (reactiva desde TanStack Query)
+  const serverConfig = createMemo(() => serverSync().configQuery.data ?? {})
+  const serverMcpConfig = createMemo(() => {
+    const cfg = serverConfig()
+    return cfg.mcp && typeof cfg.mcp === "object" ? (cfg.mcp as Record<string, unknown>) : {}
+  })
+
+  // Config local de fallback (localStorage)
+  const localMcpConfig = createMemo(() => loadLocalMcp(localDir()))
+
+  // Config efectiva: prefiere servidor si tiene datos, luego localStorage, luego {}
+  // Filtra entradas con enabled:false (servidores eliminados via JSON)
+  const effectiveMcpConfig = createMemo(() => {
+    const s = serverMcpConfig()
+    if (Object.keys(s).length > 0) {
+      return Object.fromEntries(
+        Object.entries(s).filter(([, v]) => {
+          if (v && typeof v === "object" && "enabled" in v && (v as Record<string, unknown>).enabled === false) return false
+          return true
+        })
+      )
+    }
+    const l = localMcpConfig()
+    return l ?? {}
+  })
+
+  // ¿Estamos en modo offline (server vacío pero local tiene datos)?
+  const isOffline = createMemo(() => {
+    return Object.keys(serverMcpConfig()).length === 0 && Object.keys(localMcpConfig()).length > 0
+  })
+
+  const mcpJsonText = createMemo(() => JSON.stringify(effectiveMcpConfig(), null, 2))
+
+  // Detecta si hay cambios no guardados (solo cuando estamos editando)
+  const hasUnsavedChanges = createMemo(() => {
+    if (!jsonEditing()) return false
+    return text() !== mcpJsonText()
+  })
 
   const items = createMemo(() => {
-    const config = mcpConfig()
+    const config = effectiveMcpConfig()
     const status = sync().data.mcp ?? {}
     return Object.keys(config)
       .sort((a, b) => a.localeCompare(b))
@@ -56,12 +128,15 @@ export function DialogMcpManager() {
 
   const [text, setText] = createSignal("")
 
-  // Seed the textarea with the current server config on mount.
-  // This is the ONLY place that sets the initial value — no reactive
-  // effect overwrites it afterwards.
+  createEffect(() => {
+    if (jsonEditing()) return
+    const cfg = effectiveMcpConfig()
+    setText(JSON.stringify(cfg, null, 2))
+  })
+
+  // Al montar, cargar config actual (servidor o localStorage)
   onMount(() => {
-    const cfg = mcpConfig()
-    console.log("[MCP] onMount mcpConfig:", JSON.stringify(cfg, null, 2))
+    const cfg = effectiveMcpConfig()
     setText(JSON.stringify(cfg, null, 2))
   })
 
@@ -78,40 +153,55 @@ export function DialogMcpManager() {
 
   const saveJson = async () => {
     const value = parsed()
-    console.log("[MCP] saveJson called, parsed:", value)
     if (!value) {
       showToast({ variant: "error", title: language.t("mcp.json.parseError") })
       return
     }
     setSaving(true)
     try {
-      const oldMcp = serverSync().data.config.mcp ?? {}
-      const patched: Record<string, unknown> = { ...value }
-      for (const key of Object.keys(oldMcp)) {
-        if (!(key in patched)) {
+      const config = serverConfig()
+
+      saveLocalMcp(localDir(), value)
+
+      const previousMcp = config.mcp && typeof config.mcp === "object" ? (config.mcp as Record<string, unknown>) : {}
+      const patched = { ...value }
+      for (const key of Object.keys(previousMcp)) {
+        if (!(key in value)) {
           patched[key] = { enabled: false }
         }
       }
-      const fullConfig = { ...serverSync().data.config, mcp: patched } as Config
-      console.log("[MCP] sending config to server:", JSON.stringify(fullConfig, null, 2))
-      await serverSync().updateConfig(fullConfig)
-      setText(JSON.stringify(patched, null, 2))
-      showToast({ variant: "success", title: language.t("mcp.json.saved") })
+
+      const fullConfig = { ...config, mcp: patched } as Config
+
+      try {
+        await serverSync().updateConfig(fullConfig)
+        showToast({ variant: "success", title: language.t("mcp.json.saved") })
+        setWarnUnsaved(false)
+      } catch (serverError) {
+        showToast({
+          variant: "warning",
+          title: language.t("mcp.json.savedLocal"),
+          description: language.t("mcp.json.savedLocalDesc"),
+        })
+      }
+
+      setText(JSON.stringify(value, null, 2))
       setJsonEditing(false)
     } catch (error) {
-      console.error("[MCP] saveJson error:", error)
       showToast({
         variant: "error",
         title: language.t("common.requestFailed"),
         description: error instanceof Error ? error.message : String(error),
       })
+      resetJson()
     }
     setSaving(false)
   }
 
   const resetJson = () => {
     console.log("[MCP] resetJson called")
-    setText(JSON.stringify(mcpConfig(), null, 2))
+    setText(mcpJsonText())
+    setWarnUnsaved(false)
   }
 
   const addServer = async (close: () => void) => {
@@ -123,10 +213,31 @@ export function DialogMcpManager() {
         : { type: "remote", url: url().trim(), enabled: enabled() }
     setSaving(true)
     try {
-      const fullConfig = { ...serverSync().data.config, mcp: { ...(serverSync().data.config.mcp ?? {}), [id]: entry } } as Config
-      await serverSync().updateConfig(fullConfig)
-      setText(JSON.stringify({ ...((serverSync().data.config.mcp ?? {}) as Record<string, unknown>), [id]: entry }, null, 2))
-      showToast({ variant: "success", title: language.t("mcp.add.added", { name: id }) })
+      const config = serverConfig()
+      const currentMcp = config.mcp && typeof config.mcp === "object" ? (config.mcp as Record<string, unknown>) : {}
+
+      // 1. Guardar en localStorage inmediatamente
+      const updatedMcp = { ...currentMcp, [id]: entry }
+      saveLocalMcp(localDir(), updatedMcp)
+
+      try {
+        const fullConfig = { ...config, mcp: updatedMcp } as Config
+        await serverSync().updateConfig(fullConfig)
+        showToast({ variant: "success", title: language.t("mcp.add.added", { name: id }) })
+      } catch (serverError) {
+        console.warn("[MCP] server add failed, saved locally:", serverError)
+        showToast({
+          variant: "warning",
+          title: language.t("mcp.add.addedLocal"),
+          description: language.t("mcp.add.addedLocalDesc", { name: id }),
+        })
+      }
+
+      // Actualizar el textarea con lo que se guardó
+      const finalMcp = Object.keys(serverMcpConfig()).length > 0
+        ? { ...serverMcpConfig(), [id]: entry }
+        : updatedMcp
+      setText(JSON.stringify(finalMcp, null, 2))
       setName("")
       setCommand("")
       setUrl("")
@@ -144,8 +255,15 @@ export function DialogMcpManager() {
   return (
     <Dialog size="x-large" fit title={language.t("page.mcp.title")} description={language.t("page.mcp.description", { connected: connected(), total: items().length })}>
       <div class="flex flex-col gap-4 px-3 pb-3 max-h-[75vh] overflow-y-auto">
+        {/* Header con badge offline */}
         <div class="flex items-center justify-between gap-2">
           <span class="text-12-medium text-text-weak">{language.t("page.mcp.cards")}</span>
+          <Show when={isOffline()}>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-icon-warning-base/10 text-11-medium text-icon-warning-base">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              {language.t("mcp.offlineBadge")}
+            </span>
+          </Show>
           <Popover
             open={addOpen()}
             onOpenChange={setAddOpen}
@@ -192,6 +310,7 @@ export function DialogMcpManager() {
           </Popover>
         </div>
 
+        {/* MCP Cards: se renderizan desde effectiveMcpConfig (server o localStorage) */}
         <Show
           when={items().length > 0}
           fallback={<div class="text-14-regular text-text-base text-center py-6">{language.t("dialog.mcp.empty")}</div>}
@@ -241,6 +360,7 @@ export function DialogMcpManager() {
           </div>
         </Show>
 
+        {/* JSON Editor */}
         <div class="flex flex-col gap-2">
           <div class="flex items-center justify-between gap-2">
             <span class="text-12-medium text-text-weak">{language.t("mcp.json.title")}</span>
@@ -250,10 +370,10 @@ export function DialogMcpManager() {
                   {language.t("mcp.json.reset")}
                 </Button>
                 <Show when={jsonEditing()}>
-                  <Button size="small" variant="ghost" onClick={() => { setText(JSON.stringify(mcpConfig(), null, 2)); setJsonEditing(false) }}>
+                  <Button size="small" variant="ghost" disabled={hasUnsavedChanges()} onClick={() => { setText(mcpJsonText()); setJsonEditing(false) }}>
                     {language.t("mcp.json.cancel")}
                   </Button>
-                  <Button size="small" variant="primary" disabled={!parsed()} onClick={() => { console.log("[MCP] save clicked, parsed:", parsed(), "text:", text()); void saveJson() }}>
+                  <Button size="small" variant="primary" disabled={!parsed() || saving()} onClick={() => { console.log("[MCP] save clicked, parsed:", parsed(), "text:", text()); void saveJson() }}>
                     {language.t("mcp.json.save")}
                   </Button>
                 </Show>
@@ -265,7 +385,7 @@ export function DialogMcpManager() {
             spellcheck={false}
             readonly={!jsonEditing()}
             value={text()}
-            onInput={(event) => setText(event.currentTarget.value)}
+            onInput={(event) => { setText(event.currentTarget.value); setWarnUnsaved(true) }}
           />
           <Show when={text() && !parsed()}>
             <span class="text-11-regular text-text-diff-delete-base">{language.t("mcp.json.invalid")}</span>

@@ -685,7 +685,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     disableMcp: children.disableMcp,
     queryOptions: queryOptionsApi,
     refreshProviders,
-    // bootstrap,
+    configQuery,
     updateConfig: updateConfigMutation.mutateAsync,
     project: projectApi,
     session,
