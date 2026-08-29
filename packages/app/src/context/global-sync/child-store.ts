@@ -151,7 +151,7 @@ export function createChildStoreManager(input: {
 
   function ensureChild(directory: string) {
     const key = directoryKey(directory)
-    if (!key) console.error("No directory provided")
+    if (!key) throw new Error("No directory provided")
     if (!children[key]) {
       const vcs = runWithOwner(input.owner, () =>
         input.persist(

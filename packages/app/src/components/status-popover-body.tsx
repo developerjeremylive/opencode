@@ -12,11 +12,13 @@ import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
+import { useServerSync } from "@/context/server-sync"
 import { type ServerHealth } from "@/utils/server-health"
 import { useGlobal } from "@/context/global"
 import { useSettings } from "@/context/settings"
 import { useMcpToggle } from "@/context/mcp"
 import { useServerProtocol } from "@/context/server-sdk"
+import { useQueryClient } from "@tanstack/solid-query"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -286,14 +288,50 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   })
   const toggleMcp = useMcpToggle()
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)
-  const mcpNames = createMemo(() => Object.keys(sync().data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
-  const mcpStatus = (name: string) => sync().data.mcp?.[name]?.status
+  const serverSync = useServerSync()
+  const queryClient = useQueryClient()
+  const mcpNames = createMemo(() => {
+    const s = sync()
+    const mcpStatus = s?.data?.mcp ?? {}
+    const serverConfig = serverSync().configQuery?.data
+    const mcpConfig = serverConfig?.mcp && typeof serverConfig.mcp === "object" ? (serverConfig.mcp as Record<string, unknown>) : {}
+    
+    return Object.keys(mcpConfig)
+      .filter((name) => {
+        const entry = mcpConfig[name]
+        if (entry && typeof entry === "object") {
+          if ("enabled" in entry && (entry as Record<string, unknown>).enabled === false) return false
+          if ("disabled" in entry && (entry as Record<string, unknown>).disabled === true) return false
+        }
+        return true
+      })
+      .sort((a, b) => a.localeCompare(b))
+  })
+  const refreshMcpStatus = async () => {
+    const directory = serverSync().data.path?.directory
+    if (!directory) return
+    await queryClient.refetchQueries(serverSync().queryOptions.mcp(directory))
+  }
+  const mcpStatus = (name: string) => {
+    const s = sync()
+    return s?.data?.mcp?.[name]?.status
+  }
   const mcpConnected = createMemo(() => mcpNames().filter((name) => mcpStatus(name) === "connected").length)
-  const lspItems = createMemo(() => sync().data.lsp ?? [])
+  const lspItems = createMemo(() => {
+    try {
+      return sync()?.data?.lsp ?? []
+    } catch {
+      return []
+    }
+  })
   const lspCount = createMemo(() => lspItems().length)
-  const plugins = createMemo(() =>
-    (sync().data.config.plugin ?? []).map((item) => (typeof item === "string" ? item : item[0])),
-  )
+  const plugins = createMemo(() => {
+    try {
+      return (sync()?.data?.config?.plugin ?? []).map((item: string | [string]) => (typeof item === "string" ? item : item[0]))
+    } catch {
+      return []
+    }
+  })
   const pluginCount = createMemo(() => plugins().length)
   const pluginEmpty = createMemo(() => pluginEmptyMessage(language.t("dialog.plugins.empty"), "opencode.json"))
 
@@ -409,14 +447,20 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                 <For each={mcpNames()}>
                   {(name) => {
                     const status = () => mcpStatus(name)
-                    const enabled = () => status() === "connected"
+                    const enabled = () => {
+                      if (status() === "connected") return true
+                      if (status() === "disabled") return false
+                      return false
+                    }
                     return (
                       <button
                         type="button"
                         class="flex items-center gap-2 w-full min-h-8 pl-3 pr-2 py-1 rounded-md hover:bg-surface-raised-base-hover transition-colors text-left"
                         onClick={() => {
                           if (toggleMcp.isPending) return
-                          toggleMcp.mutate(name)
+                          void toggleMcp.mutate(name, {
+                            onSettled: refreshMcpStatus,
+                          })
                         }}
                         disabled={toggleMcp.isPending && toggleMcp.variables === name}
                       >
@@ -446,7 +490,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                             disabled={toggleMcp.isPending && toggleMcp.variables === name}
                             onChange={() => {
                               if (toggleMcp.isPending) return
-                              toggleMcp.mutate(name)
+                              void toggleMcp.mutate(name, {
+                                onSettled: refreshMcpStatus,
+                              })
                             }}
                           />
                         </div>

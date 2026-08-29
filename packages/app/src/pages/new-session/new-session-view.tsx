@@ -39,6 +39,22 @@ export function NewSessionView(props: {
       >
         <div class="absolute inset-x-0 top-[25.375%] flex justify-center px-6">
           <div class={NEW_SESSION_CONTENT_WIDTH}>
+            <div class="mb-6 flex justify-center">
+              <div
+                style={{
+                  "background-color": "#ffffff",
+                  "border-radius": "1.5rem",
+                  padding: "0.75rem",
+                  "box-shadow": "0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)",
+                }}
+              >
+                <img
+                  src="/ai-live-chatbot.ico"
+                  alt="AI Live Chatbot"
+                  style={{ width: "6rem", height: "6rem", display: "block" }}
+                />
+              </div>
+            </div>
             <WordmarkV2 class="h-auto w-full text-v2-background-bg-inverse" />
             <div class="mt-8 flex flex-col gap-8">
               <PromptInputV2Composer controller={props.input} />

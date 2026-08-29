@@ -1181,7 +1181,6 @@ export const dict = {
   "mcp.json.savedLocalDesc": "The server is unreachable. Changes saved locally until the server is back.",
   "mcp.add.addedLocal": "Added {{name}} (local)",
   "mcp.add.addedLocalDesc": "{{name}} added locally. Will sync when server is reachable.",
-  "dialog.mcp.empty": "No MCPs configured. Add one below or edit the JSON directly.",
   "prompt.mcp.title": "MCP servers",
   "prompt.plugins.title": "Plugins",
   "settings.general.section.uiux": "Interface design",

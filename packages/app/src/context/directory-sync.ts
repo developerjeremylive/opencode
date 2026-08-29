@@ -27,28 +27,44 @@ export const createDirSyncContext = (
   serverSDK: ReturnType<typeof createServerSdkContext>,
 ) => {
   const client = serverSDK.createClient({ directory, throwOnError: true })
-  const current = createMemo(() => serverSync.child(directory, { mcp: true }))
-  const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
+  const current = createMemo(() => {
+    try {
+      return serverSync.child(directory, { mcp: true })
+    } catch {
+      return undefined
+    }
+  })
+  const currentStore = () => current()?.[0]
+  const currentSetter = () => current()?.[1]
+  const absolute = (path: string) => {
+    const store = currentStore()
+    if (!store) return path
+    return (store.path.directory + "/" + path).replace("//", "/")
+  }
   const data = new Proxy({} as State, {
     get(_, property: keyof State) {
       if (property === "session_working") return serverSync.session.data.session_working.bind(serverSync.session.data)
       if (sessionFields.has(property)) return serverSync.session.data[property as keyof typeof serverSync.session.data]
-      return current()[0][property]
+      return currentStore()?.[property]
     },
   })
   const set = ((...input: unknown[]) => {
     if (typeof input[0] === "string" && sessionFields.has(input[0])) {
       return (serverSync.session.set as (...args: unknown[]) => unknown)(...input)
     }
-    const result = (current()[1] as (...args: unknown[]) => unknown)(...input)
-    if (input[0] === "session") current()[0].session.forEach(serverSync.session.remember)
+    const setter = currentSetter()
+    if (!setter) return
+    const result = setter(...input)
+    if (input[0] === "session") currentStore()?.session.forEach(serverSync.session.remember)
     return result
   }) as SetStoreFunction<State>
 
   const index = (sessionID: string) => {
     const session = serverSync.session.get(sessionID)
     if (!session || session.directory !== directory) return
-    const [store, setStore] = current()
+    const tuple = current()
+    if (!tuple) return
+    const [store, setStore] = tuple
     const result = Binary.search(store.session, session.id, (item) => item.id)
     if (result.found) {
       setStore("session", result.index, reconcile(session))
@@ -64,13 +80,15 @@ export const createDirSyncContext = (
     data,
     set,
     get status() {
-      return current()[0].status
+      return currentStore()?.status
     },
     get ready() {
-      return current()[0].status !== "loading"
+      const store = currentStore()
+      return store ? store.status !== "loading" : false
     },
     get project() {
-      const store = current()[0]
+      const store = currentStore()
+      if (!store) return undefined
       const match = Binary.search(serverSync.data.project, store.project, (project) => project.id)
       if (match.found) return serverSync.data.project[match.index]
     },
@@ -122,7 +140,9 @@ export const createDirSyncContext = (
         serverSync.session.evict(sessionID)
       },
       fetch: async (count = 10) => {
-        const [store, setStore] = current()
+        const tuple = current()
+        if (!tuple) return
+        const [store, setStore] = tuple
         setStore("limit", (value) => value + count)
         const response = await serverSDK.api.session.list({ directory, limit: store.limit, order: "desc" })
         const sessions = response.data
@@ -132,11 +152,16 @@ export const createDirSyncContext = (
         sessions.forEach(serverSync.session.remember)
         setStore("session", reconcile(sessions, { key: "id" }))
       },
-      more: createMemo(() => current()[0].session.length >= current()[0].limit),
+      more: createMemo(() => {
+        const store = currentStore()
+        return store ? store.session.length >= store.limit : false
+      }),
       archive: async (sessionID: string) => {
         if ((await serverSDK.protocol) !== "v1") return
         await serverSDK.client.session.update({ sessionID, directory, time: { archived: Date.now() } })
-        current()[1](
+        const tuple = current()
+        if (!tuple) return
+        tuple[1](
           "session",
           produce((draft) => {
             const match = Binary.search(draft, sessionID, (session) => session.id)
@@ -150,7 +175,7 @@ export const createDirSyncContext = (
     },
     absolute,
     get directory() {
-      return current()[0].path.directory
+      return currentStore()?.path.directory ?? directory
     },
   }
 }

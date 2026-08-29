@@ -1,5 +1,6 @@
 import { Component, createMemo, Show } from "solid-js"
 import { useSync } from "@/context/sync"
+import { useServerSync } from "@/context/server-sync"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { List } from "@opencode-ai/ui/list"
 import { Switch } from "@opencode-ai/ui/switch"
@@ -10,19 +11,32 @@ const statusLabels = {
   connected: "mcp.status.connected",
   failed: "mcp.status.failed",
   needs_auth: "mcp.status.needs_auth",
-  needs_client_registration: "mcp.status.needs_client_registration",
+  needs_client_registration: "mcp.status.needs_auth",
   disabled: "mcp.status.disabled",
 } as const
 
 export const DialogSelectMcp: Component = () => {
   const sync = useSync()
+  const serverSync = useServerSync()
   const language = useLanguage()
 
-  const items = createMemo(() =>
-    Object.entries(sync().data.mcp ?? {})
+  const items = createMemo(() => {
+    const s = sync()
+    const serverConfig = serverSync().configQuery?.data
+    const mcpConfig = serverConfig?.mcp && typeof serverConfig.mcp === "object" ? (serverConfig.mcp as Record<string, unknown>) : {}
+    
+    return Object.entries(s?.data?.mcp ?? {})
+      .filter(([name]) => {
+        // Only show MCP servers that are in the config
+        const entry = mcpConfig[name]
+        if (!entry || typeof entry !== "object") return false
+        if ("enabled" in entry && (entry as Record<string, unknown>).enabled === false) return false
+        if ("disabled" in entry && (entry as Record<string, unknown>).disabled === true) return false
+        return true
+      })
       .map(([name, status]) => ({ name, status: status.status }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-  )
+      .sort((a, b) => a.name.localeCompare(b.name))
+  })
 
   const toggle = useMcpToggle()
 
@@ -48,7 +62,13 @@ export const DialogSelectMcp: Component = () => {
         }}
       >
         {(i) => {
-          const mcpStatus = () => sync().data.mcp[i.name]
+          const mcpStatus = () => {
+            try {
+              return sync()?.data?.mcp?.[i.name]
+            } catch {
+              return undefined
+            }
+          }
           const status = () => mcpStatus()?.status
           const statusLabel = () => {
             const key = status() ? statusLabels[status() as keyof typeof statusLabels] : undefined

@@ -10,7 +10,7 @@ import { useSync } from "@/context/sync"
 import { useMcpToggle } from "@/context/mcp"
 import { useServerSync } from "@/context/server-sync"
 import { showToast } from "@/utils/toast"
-import { useQueryClient } from "@tanstack/solid-query"
+import { useQuery, useQueryClient, skipToken } from "@tanstack/solid-query"
 
 const statusLabels = {
   connected: "mcp.status.connected",
@@ -54,6 +54,16 @@ export function DialogMcpManager() {
   const serverSync = useServerSync()
   const toggle = useMcpToggle()
   const queryClient = useQueryClient()
+  const refreshMcpStatus = async () => {
+    const directory = serverSync().data.path?.directory ?? serverSync().configQuery?.data?.path?.directory
+    if (!directory) return
+    await queryClient.fetchQuery(serverSync().queryOptions.mcp(directory))
+  }
+  const mcpStatusQuery = useQuery(() => {
+    const directory = serverSync().data.path?.directory
+    if (!directory) return skipToken
+    return serverSync().queryOptions.mcp(directory)
+  })
 
   const [addOpen, setAddOpen] = createSignal(false)
   const [name, setName] = createSignal("")
@@ -70,29 +80,33 @@ export function DialogMcpManager() {
   const localDir = createMemo(() => directory() || "global")
 
   // Config del servidor (reactiva desde TanStack Query)
-  const serverConfig = createMemo(() => serverSync().configQuery.data ?? {})
+  const serverConfig = createMemo(() => {
+    try {
+      return serverSync().configQuery?.data ?? {}
+    } catch {
+      return {}
+    }
+  })
   const serverMcpConfig = createMemo(() => {
     const cfg = serverConfig()
-    return cfg.mcp && typeof cfg.mcp === "object" ? (cfg.mcp as Record<string, unknown>) : {}
+    return cfg?.mcp && typeof cfg.mcp === "object" ? (cfg.mcp as Record<string, unknown>) : {}
   })
 
   // Config local de fallback (localStorage)
   const localMcpConfig = createMemo(() => loadLocalMcp(localDir()))
 
-  // Config efectiva: prefiere servidor si tiene datos, luego localStorage, luego {}
-  // Filtra entradas con enabled:false (servidores eliminados via JSON)
   const effectiveMcpConfig = createMemo(() => {
     const s = serverMcpConfig()
-    if (Object.keys(s).length > 0) {
-      return Object.fromEntries(
-        Object.entries(s).filter(([, v]) => {
-          if (v && typeof v === "object" && "enabled" in v && (v as Record<string, unknown>).enabled === false) return false
-          return true
-        })
-      )
-    }
-    const l = localMcpConfig()
-    return l ?? {}
+    const base = Object.keys(s).length > 0 ? s : (localMcpConfig() ?? {})
+    return Object.fromEntries(
+      Object.entries(base).filter(([, v]) => {
+        if (v && typeof v === "object") {
+          if ("enabled" in v && (v as Record<string, unknown>).enabled === false) return false
+          if ("disabled" in v && (v as Record<string, unknown>).disabled === true) return false
+        }
+        return true
+      }),
+    )
   })
 
   // ¿Estamos en modo offline (server vacío pero local tiene datos)?
@@ -110,18 +124,26 @@ export function DialogMcpManager() {
 
   const items = createMemo(() => {
     const config = effectiveMcpConfig()
-    const status = sync().data.mcp ?? {}
+    const mcpStatus = mcpStatusQuery.data ?? {}
     return Object.keys(config)
+      .filter((name) => {
+        const st = mcpStatus[name]?.status
+        if (st === "disabled") return false
+        const entry = config[name]
+        if (entry && typeof entry === "object") {
+          if ("enabled" in entry && (entry as Record<string, unknown>).enabled === false) return false
+          if ("disabled" in entry && (entry as Record<string, unknown>).disabled === true) return false
+        }
+        return true
+      })
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const entry = config[name]
         const kind =
           entry && typeof entry === "object" && "type" in entry
             ? entry.type
-            : entry && typeof entry === "object" && "enabled" in entry
-              ? undefined
-              : undefined
-        return { name, status: status[name]?.status, kind }
+            : undefined
+        return { name, status: mcpStatus[name]?.status, kind }
       })
   })
   const connected = createMemo(() => items().filter((item) => item.status === "connected").length)
@@ -138,6 +160,10 @@ export function DialogMcpManager() {
   onMount(() => {
     const cfg = effectiveMcpConfig()
     setText(JSON.stringify(cfg, null, 2))
+    const directory = serverSync().data.path?.directory
+    if (directory) {
+      void queryClient.refetchQueries(serverSync().queryOptions.mcp(directory))
+    }
   })
 
   const parsed = createMemo(() => {
@@ -200,7 +226,6 @@ export function DialogMcpManager() {
   }
 
   const resetJson = () => {
-    console.log("[MCP] resetJson called")
     setText(mcpJsonText())
     setWarnUnsaved(false)
   }
@@ -226,7 +251,6 @@ export function DialogMcpManager() {
         await serverSync().updateConfig(fullConfig)
         showToast({ variant: "success", title: language.t("mcp.add.added", { name: id }) })
       } catch (serverError) {
-        console.warn("[MCP] server add failed, saved locally:", serverError)
         showToast({
           variant: "warning",
           title: language.t("mcp.add.addedLocal"),
@@ -334,7 +358,9 @@ export function DialogMcpManager() {
                           disabled={!status() || status() === "pending" || (toggle.isPending && toggle.variables === item.name)}
                           onChange={() => {
                             if (toggle.isPending) return
-                            toggle.mutate(item.name)
+                            void toggle.mutate(item.name, {
+                              onSettled: refreshMcpStatus,
+                            })
                           }}
                         />
                       </div>
@@ -374,7 +400,7 @@ export function DialogMcpManager() {
                   <Button size="small" variant="ghost" disabled={hasUnsavedChanges()} onClick={() => { setText(mcpJsonText()); setJsonEditing(false) }}>
                     {language.t("mcp.json.cancel")}
                   </Button>
-                  <Button size="small" variant="primary" disabled={!parsed() || saving()} onClick={() => { console.log("[MCP] save clicked, parsed:", parsed(), "text:", text()); void saveJson() }}>
+                  <Button size="small" variant="primary" disabled={!parsed() || saving()} onClick={() => void saveJson()}>
                     {language.t("mcp.json.save")}
                   </Button>
                 </Show>
