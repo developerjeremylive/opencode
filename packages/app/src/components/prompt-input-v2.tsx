@@ -29,6 +29,7 @@ import { type ImageAttachmentPart, usePrompt } from "@/context/prompt"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { useServerSync } from "@/context/server-sync"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { showToast } from "@/utils/toast"
 import { PromptInputV2, type PromptInputV2Suggestion } from "@opencode-ai/session-ui/v2/prompt-input"
@@ -37,6 +38,7 @@ import {
   createPromptInputV2State,
   type PromptInputV2Interaction,
 } from "@opencode-ai/session-ui/v2/prompt-input/interaction"
+import { useQuery, useQueryClient, skipToken } from "@tanstack/solid-query"
 
 export type PromptInputV2ComposerProps = {
   class?: string
@@ -597,12 +599,45 @@ function openComment(  item: { path: string; commentID?: string; commentOrigin?:
 function PromptInputV2McpControl() {
   const language = useLanguage()
   const sync = useSync()
+  const serverSync = useServerSync()
   const toggle = useMcpToggle()
-  const items = createMemo(() =>
-    Object.entries(sync().data.mcp ?? {})
-      .map(([name, status]) => ({ name, status: status.status }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-  )
+  const queryClient = useQueryClient()
+  const refreshMcpStatus = async () => {
+    const directory = serverSync().data.path?.directory
+    if (!directory) return
+    await queryClient.fetchQuery(serverSync().queryOptions.mcp(directory))
+  }
+  const mcpStatusQuery = useQuery(() => {
+    const directory = serverSync().data.path?.directory
+    if (!directory) return skipToken
+    return serverSync().queryOptions.mcp(directory)
+  })
+  const serverConfig = createMemo(() => {
+    try {
+      return serverSync().configQuery?.data ?? {}
+    } catch {
+      return {}
+    }
+  })
+  const serverMcpConfig = createMemo(() => {
+    const cfg = serverConfig()
+    return cfg?.mcp && typeof cfg.mcp === "object" ? (cfg.mcp as Record<string, unknown>) : {}
+  })
+  const items = createMemo(() => {
+    const config = serverMcpConfig()
+    const mcpStatus = mcpStatusQuery.data ?? {}
+    return Object.entries(config)
+      .filter(([, entry]) => {
+        if (entry && typeof entry === "object") {
+          if ("enabled" in entry && (entry as Record<string, unknown>).enabled === false) return false
+          if ("disabled" in entry && (entry as Record<string, unknown>).disabled === true) return false
+        }
+        return true
+      })
+      .map(([name]) => ({ name, status: mcpStatus[name]?.status }))
+      .filter((item) => item.status)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  })
 
   return (
     <Show when={items().length > 0}>
@@ -627,7 +662,9 @@ function PromptInputV2McpControl() {
                     disabled={item.status === "pending" || (toggle.isPending && toggle.variables === item.name)}
                     onChange={() => {
                       if (toggle.isPending) return
-                      toggle.mutate(item.name)
+                      void toggle.mutate(item.name, {
+                        onSettled: refreshMcpStatus,
+                      })
                     }}
                   >
                     <span class="truncate">{item.name}</span>
